@@ -6,41 +6,104 @@ Microservice responsible for automatically matching patients to the best availab
 
 ### The Dispatch Flow
 
+```mermaid
+sequenceDiagram
+    participant Patient
+    participant BookingSvc as Booking Service
+    participant Kafka
+    participant DispatchSvc as Dispatch Service
+    participant Redis
+    participant PostgreSQL
+    participant NotifSvc as Notification Service
+
+    Patient->>BookingSvc: Create booking
+    BookingSvc->>Kafka: Publish booking.created
+    Kafka->>DispatchSvc: Consume booking.created
+    DispatchSvc->>Redis: Get all online nurses (nurse:available:*)
+    Redis-->>DispatchSvc: Available nurses list
+
+    Note over DispatchSvc: Filter & Score Nurses<br/>1. Verified ✓<br/>2. Not in session ✓<br/>3. Service match ✓<br/>4. Within 20km ✓<br/>5. Score by distance + rating
+
+    DispatchSvc->>Redis: Mark best nurse in-session
+    DispatchSvc->>PostgreSQL: Log dispatch result
+    DispatchSvc->>Kafka: Publish nurse.matched
+    Kafka->>NotifSvc: Consume nurse.matched
+    NotifSvc->>Patient: Push notification (nurse assigned)
 ```
-Patient creates booking
-        │
-        ▼
-┌─────────────────────┐
-│  Booking Service     │
-│  publishes event to  │──── Kafka topic: booking.created
-│  Kafka               │
-└─────────────────────┘
-        │
-        ▼
-┌─────────────────────┐
-│  Dispatch Service    │
-│  (Kafka Consumer)    │◄── Listens on booking.created
-│                      │
-│  1. Get all online   │──── Redis: nurse:available:*
-│     nurses           │
-│  2. Filter by:       │
-│     - Verified       │
-│     - Not in session │
-│     - Service match  │
-│     - Within 20km    │
-│  3. Score & rank     │
-│  4. Pick best nurse  │
-│                      │
-│  Publishes result    │──── Kafka topic: nurse.matched
-└─────────────────────┘
-        │
-        ▼
-┌─────────────────────┐
-│  Notification Service│
-│  (Kafka Consumer)    │◄── Listens on nurse.matched
-│  Sends push/SMS to   │
-│  nurse & patient     │
-└─────────────────────┘
+
+### Architecture Overview
+
+```mermaid
+graph TB
+    subgraph Client Apps
+        NA[Nurse App]
+        PA[Patient App]
+    end
+
+    subgraph Gateway
+        GW[API Gateway :9090]
+    end
+
+    subgraph Dispatch Service :8087
+        API[REST API]
+        MATCHER[Matching Algorithm]
+        KC[Kafka Consumer]
+        KP[Kafka Producer]
+    end
+
+    subgraph Data Stores
+        REDIS[(Redis<br/>Nurse Availability Pool<br/>DB 0)]
+        PG[(PostgreSQL<br/>dispatch_logs)]
+    end
+
+    subgraph Event Bus
+        K1[booking.created]
+        K2[nurse.matched]
+    end
+
+    NA -->|Go Online / Update Location| GW
+    GW -->|/dispatch/*| API
+    API -->|Set nurse available| REDIS
+    API -->|Read available nurses| REDIS
+    K1 -->|Consume| KC
+    KC --> MATCHER
+    MATCHER -->|Query nurses| REDIS
+    MATCHER -->|Log dispatch| PG
+    MATCHER --> KP
+    KP -->|Publish| K2
+```
+
+### Matching Algorithm Flow
+
+```mermaid
+flowchart TD
+    A[booking.created event received] --> B[Query Redis for online nurses]
+    B --> C{Any nurses available?}
+    C -->|No| D[Log dispatch failure to PostgreSQL]
+    C -->|Yes| E[Filter candidates]
+    
+    E --> F{Verified?}
+    F -->|No| G[Skip nurse]
+    F -->|Yes| H{Not in session?}
+    H -->|No| G
+    H -->|Yes| I{Service match?}
+    I -->|No| G
+    I -->|Yes| J{Within 20km?}
+    J -->|No| G
+    J -->|Yes| K[Calculate match score]
+    
+    K --> L["score = (distScore × 0.4) + (ratingScore × 0.3)"]
+    L --> M{Emergency booking?}
+    M -->|Yes| N[Add +0.3 emergency bonus]
+    M -->|No| O[Keep base score]
+    N --> P[Add to candidates list]
+    O --> P
+
+    P --> Q[Sort candidates by score DESC]
+    Q --> R[Select highest-scoring nurse]
+    R --> S[Mark nurse in-session in Redis]
+    S --> T[Log dispatch to PostgreSQL]
+    T --> U[Publish nurse.matched to Kafka]
 ```
 
 ### Step-by-Step
@@ -472,10 +535,14 @@ dispatch:
 
 ### Gateway Routing
 
-The gateway proxies all `/dispatch/*` requests to this service:
-
-```
-Client → Gateway (:9090) → /dispatch/* → Dispatch Service (:8087)
+```mermaid
+graph LR
+    Client[Client App] -->|HTTP Request| GW[Gateway :9090]
+    GW -->|/dispatch/*| DS[Dispatch Service :8087]
+    GW -->|Auth Headers| DS
+    
+    style GW fill:#4CAF50,color:#fff
+    style DS fill:#2196F3,color:#fff
 ```
 
 ---
