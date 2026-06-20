@@ -1,0 +1,4 @@
+.env
+dispatch-service
+*.exe
+vendor/
