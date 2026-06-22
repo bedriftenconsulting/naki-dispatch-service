@@ -16,20 +16,21 @@ func SetupRouter() *gin.Engine {
 		c.JSON(200, gin.H{"status": "ok", "service": "dispatch"})
 	})
 
-	api := r.Group("/api/v1")
+	api := r.Group("/dispatch/api/v1")
 	api.Use(middlewares.AuthMiddleware())
 	{
 		nurse := api.Group("/availability")
-		nurse.Use(middlewares.RequireRole("nurse"))
+		nurse.Use(middlewares.RequireRole("nurse", "customer"))
 		{
 			nurse.POST("/online", controllers.GoOnline)
 			nurse.POST("/offline", controllers.GoOffline)
 			nurse.PUT("/location", controllers.UpdateLocation)
+			nurse.GET("/status", controllers.GetStatus)
 		}
 
 		dispatch := api.Group("/dispatch")
 		{
-			dispatch.GET("/nurses", middlewares.RequireRole("nurse", "super_admin"), controllers.GetAvailableNurses)
+			dispatch.GET("/nurses", middlewares.RequireRole("nurse", "customer", "super_admin"), controllers.GetAvailableNurses)
 			dispatch.POST("/match", middlewares.RequireRole("super_admin"), controllers.ManualDispatch)
 			dispatch.GET("/history/:booking_id", middlewares.RequireRole("nurse", "customer", "super_admin"), controllers.GetDispatchHistory)
 			dispatch.GET("/recent", middlewares.RequireRole("super_admin"), controllers.GetRecentDispatches)
