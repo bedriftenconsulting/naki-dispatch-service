@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: naki-dispatch-service
+  namespace: naki
+  labels:
+    app: naki-dispatch-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: naki-dispatch-service
+  template:
+    metadata:
+      labels:
+        app: naki-dispatch-service
+    spec:
+      imagePullSecrets:
+        - name: acr-pull-secret
+      containers:
+      - name: naki-dispatch-service
+        image: nakiacrplatform.azurecr.io/samples/naki:naki-dispatch-service-1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        envFrom:
+        - configMapRef:
+            name: naki-dispatch-config
+        - secretRef:
+            name: naki-dispatch-secrets
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 20
+          periodSeconds: 15
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: naki-dispatch-service
+  namespace: naki
+spec:
+  selector:
+    app: naki-dispatch-service
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
